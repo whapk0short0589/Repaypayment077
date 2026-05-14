@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="bn">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Broiler Pallah & Piece Calculator — History & Enter Key</title>
+<style>
+  body{font-family:Arial;margin:16px;background:#fff;color:#111}
+  header{display:flex;align-items:center;justify-content:space-between;gap:8px}
+  h2{margin:0 0 8px 0}
+  .controls{display:flex;gap:8px;align-items:center}
+  input[type="number"]{padding:10px;border:1px solid #ccc;border-radius:6px;width:220px}
+  button{padding:10px 12px;border:0;background:#0b79d0;color:#fff;border-radius:6px;cursor:pointer}
+  button.secondary{background:#666}
+  .menu-btn{background:transparent;color:#111;padding:8px;border-radius:6px;border:1px solid #ddd}
+  table{width:100%;border-collapse:collapse;margin-top:12px}
+  th,td{border:1px solid #ddd;padding:10px;text-align:center}
+  td[contenteditable="true"]{background:#f9f9f9}
+  .summary{margin-top:12px}
+  .muted{color:#666;font-size:13px}
+  /* history sidebar/modal */
+  .overlay{position:fixed;inset:0;background:rgba(0,0,0,0.35);display:none;align-items:center;justify-content:center;z-index:50}
+  .panel{background:#fff;width:360px;max-width:95%;border-radius:8px;padding:12px;box-shadow:0 8px 30px rgba(0,0,0,0.2)}
+  .session-row{display:flex;justify-content:space-between;gap:8px;padding:8px;border-bottom:1px solid #eee;align-items:center}
+  .session-row button{padding:6px 8px;font-size:13px}
+  .small{font-size:13px;padding:6px 8px}
+  .danger{background:#d9534f;color:#fff;border:none;border-radius:6px}
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h2>Broiler Weight, Pallah & Piece Calculator</h2>
+    <div class="muted">এক পাল্লা = 10 পিস (ডিফল্ট)</div>
+  </div>
+  <div class="controls">
+    <button id="menuBtn" class="menu-btn" title="হিস্ট্রি">⋮</button>
+  </div>
+</header>
+
+<div style="margin-top:12px">
+  <input id="weightInput" type="number" inputmode="decimal" placeholder="ওজন লিখুন (কেজি) — এন্টার/→ চাপলে এন্ট্রি হবে" />
+  <button id="addBtn">যোগ করুন</button>
+  <button id="saveSession" class="secondary small">Session Save</button>
+  <button id="finishSession" class="small">Finish</button>
+</div>
+
+<table>
+  <thead>
+    <tr>
+      <th>সিরিয়াল</th>
+      <th>ওজন (কেজি)</th>
+      <th>মুরগির সংখ্যা (পিস)</th>
+      <th>অ্যাকশন</th>
+    </tr>
+  </thead>
+  <tbody id="dataTable"></tbody>
+</table>
+
+<div class="summary">
+  <div class="muted">মোট ওজন: <strong id="totalWeight">0.00</strong> কেজি</div>
+  <div class="muted">মোট মুরগি: <strong id="totalPieces">0</strong> পিস</div>
+</div>
+
+<div style="margin-top:12px">
+  <button onclick="window.print()" class="small">PDF / Print</button>
+  <button id="clearAll" class="small danger">সব মুছো</button>
+</div>
+
+<!-- History overlay -->
+<div id="overlay" class="overlay" role="dialog" aria-modal="true">
+  <div class="panel">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+      <strong>হিস্ট্রি সেশনসমূহ</strong>
+      <button id="closeOverlay" class="small">Close</button>
+    </div>
+    <div id="sessionsList" style="max-height:320px;overflow:auto"></div>
+    <div style="margin-top:8px;display:flex;gap:8px;justify-content:flex-end">
+      <button id="exportAll" class="small">Export All JSON</button>
+      <button id="clearSessions" class="small danger">Clear All Sessions</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const PALLA_SIZE = 10;
+const STORAGE_KEY = "broiler_entries_v2";
+const SESSIONS_KEY = "broiler_sessions_v2";
+
+let serial = 0;
+let entries = []; // {id, ts, weight, pieces}
+
+function loadState(){
+  try{
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if(raw){ entries = JSON.parse(raw); }
+    serial = entries.length;
+    renderTable();
+  }catch(e){ console.warn(e); entries = []; }
+}
+function saveState(){ localStorage.setItem(STORAGE_KEY, JSON.stringify(entries)); }
+
+function addEntryFromInput(){
+  const input = document.getElementById("weightInput");
+  let val = input.value.trim();
+  if(val === "") return;
+  let w = parseFloat(val);
+  if(isNaN(w)) return;
+  let pieces = w < 0 ? -PALLA_SIZE : PALLA_SIZE;
+  const entry = { id: Date.now().toString(36)+Math.random().toString(36).slice(2,6), ts: new Date().toISOString(), weight: Math.round(w*100)/100, pieces };
+  entries.unshift(entry);
+  serial = entries.length;
+  saveState();
+  renderTable();
+  input.value = "";
+  input.focus();
+}
+
+document.getElementById("addBtn").addEventListener("click", addEntryFromInput);
+
+document.getElementById("weightInput").addEventListener("keydown", function(e){
+  if(e.key === "Enter" || e.key === "ArrowRight" || e.key === "NumpadEnter"){
+    e.preventDefault();
+    addEntryFromInput();
+  }
+});
+
+function renderTable(){
+  const tbody = document.getElementById("dataTable");
+  tbody.innerHTML = "";
+  let totalW = 0;
+  let totalP = 0;
+  entries.forEach((e, index) => {
+    totalW += parseFloat(e.weight) || 0;
+    totalP += parseInt(e.pieces) || 0;
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td>${entries.length - index}</td>
+      <td contenteditable="true" data-id="${e.id}" data-field="weight">${e.weight}</td>
+      <td contenteditable="true" data-id="${e.id}" data-field="pieces">${e.pieces}</td>
+      <td>
+        <button class="small" data-action="delete" data-id="${e.id}">Delete</button>
+      </td>
+    `;
+    tbody.appendChild(tr);
+  });
+  document.getElementById("totalWeight").innerText = totalW.toFixed(2);
+  document.getElementById("totalPieces").innerText = totalP;
+  attachRowEvents();
+}
+
+function attachRowEvents(){
+  document.querySelectorAll('#dataTable td[contenteditable="true"]').forEach(td=>{
+    td.removeEventListener('input', onCellInput);
+    td.addEventListener('input', onCellInput);
+  });
+  document.querySelectorAll('#dataTable button[data-action="delete"]').forEach(btn=>{
+    btn.removeEventListener('click', onDeleteClick);
+    btn.addEventListener('click', onDeleteClick);
+  });
+}
+
+function onCellInput(e){
+  const td = e.target;
+  const id = td.dataset.id;
+  const field = td.dataset.field;
+  let value = td.innerText.trim();
+  if(field === "weight"){
+    let num = parseFloat(value);
+    if(isNaN(num)) num = 0;
+    const idx = entries.findIndex(x=>x.id===id);
+    if(idx>=0){ entries[idx].weight = Math.round(num*100)/100; saveState(); renderTable(); }
+  } else if(field === "pieces"){
+    let num = parseInt(value);
+    if(isNaN(num)) num = 0;
+    const idx = entries.findIndex(x=>x.id===id);
+    if(idx>=0){ entries[idx].pieces = num; saveState(); renderTable(); }
+  }
+}
+
+function onDeleteClick(e){
+  const id = e.target.dataset.id;
+  if(confirm("এই এন্ট্রি মুছে ফেলতে চান?")){
+    entries = entries.filter(x=>x.id !== id);
+    saveState(); renderTable();
+  }
+}
+
+function loadSessions(){
+  try{
+    const raw = localStorage.getItem(SESSIONS_KEY);
+    if(!raw) return [];
+    return JSON.parse(raw);
+  }catch(e){ console.warn(e); return []; }
+}
+function saveSessionSnapshot(name){
+  const sessions = loadSessions();
+  const snap = { id: Date.now().toString(36), ts: new Date().toISOString(), name: name || ("Session "+(sessions.length+1)), entries: entries.slice() };
+  sessions.unshift(snap);
+  localStorage.setItem(SESSIONS_KEY, JSON.stringify(sessions));
+  renderSessionsList();
+}
+function deleteSession(id){
+  let sessions = loadSessions();
+  sessions = sessions.filter(s=>s.id !== id);
+  localStorage.setItem(SESSIONS_KEY, JSON.stringify(sessions));
+  renderSessionsList();
+}
+function loadSession(id){
+  const sessions = loadSessions();
+  const s = sessions.find(x=>x.id===id);
+  if(!s) return;
+  if(!confirm("এই সেশন লোড করলে বর্তমান এন্ট্রিগুলো ওভাররাইট হবে। চলবে?")) return;
+  entries = s.entries.slice();
+  saveState();
+  renderTable();
+  closeOverlay();
+}
+
+function renderSessionsList(){
+  const container = document.getElementById("sessionsList");
+  container.innerHTML = "";
+  const sessions = loadSessions();
+  if(sessions.length === 0){
+    container.innerHTML = "<div class='muted'>কোনো সেভড সেশন নেই। 'Session Save' বাটন দিয়ে সেশন সংরক্ষণ করতে পারেন।</div>";
+    return;
+  }
+  sessions.forEach(s=>{
+    const div = document.createElement("div");
+    div.className = "session-row";
+    const dt = new Date(s.ts).toLocaleString();
+    div.innerHTML = `
+      <div style="flex:1">
+        <div><strong>${s.name}</strong></div>
+        <div class="muted" style="font-size:13px">${dt} — ${s.entries.length} এন্ট্রি</div>
+      </div>
+      <div style="display:flex;gap:6px">
+        <button class="small" data-action="load" data-id="${s.id}">Load</button>
+        <button class="small" data-action="del" data-id="${s.id}">Delete</button>
+      </div>
+    `;
+    container.appendChild(div);
+  });
+  container.querySelectorAll('button[data-action="load"]').forEach(b=>b.addEventListener('click', e=>loadSession(e.target.dataset.id)));
+  container.querySelectorAll('button[data-action="del"]').forEach(b=>b.addEventListener('click', e=>{ if(confirm("মুছে ফেলতে চান?")) deleteSession(e.target.dataset.id); }));
+}
+
+const overlay = document.getElementById("overlay");
+document.getElementById("menuBtn").addEventListener("click", ()=>{
+  renderSessionsList();
+  overlay.style.display = "flex";
+});
+document.getElementById("closeOverlay").addEventListener("click", closeOverlay);
+function closeOverlay(){ overlay.style.display = "none"; }
+
+document.getElementById("saveSession").addEventListener("click", ()=>{
+  const name = prompt("Session নাম (ঐচ্ছিক):");
+  saveSessionSnapshot(name);
+  alert("সেশন সংরক্ষিত হয়েছে।");
+});
+
+document.getElementById("finishSession").addEventListener("click", ()=>{
+  if(entries.length === 0){ alert("কোনো এন্ট্রি নেই।"); return; }
+  if(confirm("সেশন শেষ করছো — এটি সেভ করব এবং লিস্ট ক্লিয়ার করব?")){
+    saveSessionSnapshot();
+    entries = [];
+    saveState();
+    renderTable();
+    alert("সেশন সেভ ও ক্লিয়ার করা হয়েছে।");
+  }
+});
+
+document.getElementById("exportAll").addEventListener("click", ()=>{
+  const sessions = loadSessions();
+  const blob = new Blob([JSON.stringify(sessions, null, 2)], {type: "application/json"});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = "broiler_sessions.json"; a.click();
+  URL.revokeObjectURL(url);
+});
+document.getElementById("clearSessions").addEventListener("click", ()=>{
+  if(confirm("সব সেশন মুছে ফেলতে চান?")){ localStorage.removeItem(SESSIONS_KEY); renderSessionsList(); }
+});
+
+document.getElementById("clearAll").addEventListener("click", ()=>{
+  if(confirm("সব এন্ট্রি মুছে ফেলতে চান?")){ entries = []; saveState(); renderTable(); }
+});
+
+loadState();
+</script>
+</body>
+</html>
